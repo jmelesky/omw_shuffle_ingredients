@@ -3,6 +3,7 @@
 from struct import pack, unpack
 from datetime import date
 from pathlib import Path
+from random import shuffle
 import os.path
 import argparse
 import sys
@@ -22,6 +23,9 @@ modPaths = { 'linux':   '~/.local/share/openmw/data',
 def packLong(i):
     # little-endian, "standard" 4-bytes (old 32-bit systems)
     return pack('<l', i)
+
+def packFloat(i):
+    return pack('<f', i)
 
 def packString(s):
     return bytes(s, 'ascii')
@@ -69,25 +73,26 @@ def parseINGR(rec):
     ingrrec['model'] = parseString(sr[1]['data'])
     ingrrec['name'] = parseString(sr[2]['data'])
 
-    ingrrec['weight'] = parseFloat(sr[3]['data'][0:4])
-    ingrrec['value'] = parseNum(sr[3]['data'][4:8])
-    effect_ids = []
-    skill_ids = []
-    attr_ids = []
-    for ind in range(8, 21, 4):
-        effect_ids.append(parseNum(sr[3]['data'][ind:ind+4]))
-    for ind in range(24, 37, 4):
-        skill_ids.append(parseNum(sr[3]['data'][ind:ind+4]))
-    for ind in range(40, 53, 4):
-        attr_ids.append(parseNum(sr[3]['data'][ind:ind+4]))
+    attr_struct = sr[3]['data']
+    ingrrec['weight'] = parseFloat(attr_struct[0:4])
+    ingrrec['value'] = parseNum(attr_struct[4:8])
 
-    ingrrec['effect_ids'] = effect_ids
-    ingrrec['skill_ids'] = skill_ids
-    ingrrec['attr_ids'] = attr_ids
+    effect_tuples = []
+
+    for i in range(0,4):
+        effect = parseNum(attr_struct[(8+i*4):(12+i*4)])
+        skill = parseNum(attr_struct[(24+i*4):(28+i*4)])
+        attribute = parseNum(attr_struct[(40+i*4):(44+i*4)])
+
+        effect_tuples.append((effect, skill, attribute))
+
+    ingrrec['effects'] = effect_tuples
 
     ingrrec['icon'] = parseString(sr[4]['data'])
     if len(sr) > 5:
         ingrrec['script'] = parseString(sr[5]['data'])
+
+    ingrrec['file'] = os.path.basename(rec['fullpath'])
 
     return ingrrec
 
@@ -180,32 +185,6 @@ def packIntSubRecord(lbl, num, numsize=4):
 
     return packString(lbl) + packLong(numsize) + num_bs
 
-def packLEV(rec):
-    start_bs = b''
-    id_bs = b''
-    if rec['type'] == 'LEVC':
-        start_bs += b'LEVC'
-        id_bs = 'CNAM'
-    else:
-        start_bs += b'LEVI'
-        id_bs = 'INAM'
-
-    headerflags_bs = bytes(8)
-    name_bs = packStringSubRecord('NAME', rec['name'])
-    calcfrom_bs = packIntSubRecord('DATA', rec['calcfrom'])
-    chance_bs = packIntSubRecord('NNAM', rec['chancenone'], 1)
-
-    subrec_bs = packIntSubRecord('INDX', len(rec['items']))
-    for (lvl, lid) in rec['items']:
-        subrec_bs += packStringSubRecord(id_bs, lid)
-        subrec_bs += packIntSubRecord('INTV', lvl, 2)
-
-    reclen = len(name_bs) + len(calcfrom_bs) + len(chance_bs) + len(subrec_bs)
-    reclen_bs = packLong(reclen)
-
-    return start_bs + reclen_bs + headerflags_bs + \
-        name_bs + calcfrom_bs + chance_bs + subrec_bs
-
 def packTES3(desc, numrecs, masters):
     start_bs = b'TES3'
     headerflags_bs = bytes(8)
@@ -217,7 +196,7 @@ def packTES3(desc, numrecs, masters):
     # suprisingly, .omwaddon == 0, also -- figured it would have its own
     ftype_bs = bytes(4)
 
-    author_bs = packPaddedString('omwllf, copyright 2017, jmelesky', 32)
+    author_bs = packPaddedString('code copyright 2020, jmelesky', 32)
     desc_bs = packPaddedString(desc, 256)
     numrecs_bs = packLong(numrecs)
 
@@ -234,6 +213,41 @@ def packTES3(desc, numrecs, masters):
         hedr_bs + version_bs + ftype_bs + author_bs + \
         desc_bs + numrecs_bs + masters_bs
 
+
+def packINGR(rec):
+    start_bs = b'INGR'
+
+    headerflags_bs = bytes(8)
+
+    id_bs = packStringSubRecord('NAME', rec['id'])
+    modl_bs = packStringSubRecord('MODL', rec['model'])
+    name_bs = packStringSubRecord('FNAM', rec['name'])
+
+    irdt_bs = b'IRDT'
+    irdt_bs += packLong(56) # this subrecord is always length 56
+    irdt_bs += packFloat(rec['weight'])
+    irdt_bs += packLong(rec['value'])
+    for i in range(0,4):
+        irdt_bs += packLong(rec['effects'][i][0])
+    for i in range(0,4):
+        irdt_bs += packLong(rec['effects'][i][1])
+    for i in range(0,4):
+        irdt_bs += packLong(rec['effects'][i][2])
+
+    icon_bs = packStringSubRecord('ITEX', rec['icon'])
+    script_bs = b''
+    if 'script' in rec:
+        script_bs = packStringSubRecord('SCRI', rec['script'])
+
+    reclen = len(id_bs) + len(modl_bs) + len(name_bs) + \
+        len(irdt_bs) + len(icon_bs) + len(script_bs)
+    reclen_bs = packLong(reclen)
+
+    return start_bs + reclen_bs + headerflags_bs + id_bs + \
+        modl_bs + name_bs + irdt_bs + icon_bs + script_bs
+
+
+
 def ppSubRecord(sr):
     if sr['type'] in ['NAME', 'INAM', 'CNAM', 'FNAM', 'MODL', 'TEXT', 'SCRI']:
         print("  %s, length %d, value '%s'" % (sr['type'], sr['length'], parseString(sr['data'])))
@@ -248,26 +262,15 @@ def ppRecord(rec):
         ppSubRecord(sr)
 
 
-def ppLEV(rec):
-    if rec['type'] == 'LEVC':
-        print("Creature list '%s' from '%s':" % (rec['name'], rec['file']))
-    else:
-        print("Item list '%s' from '%s':" % (rec['name'], rec['file']))
-
-    print("flags: %d, chance of none: %d" % (rec['calcfrom'], rec['chancenone']))
-
-    for (lvl, lid) in rec['items']:
-        print("  %2d - %s" % (lvl, lid))
-
 def ppINGR(rec):
     print("Ingredient name: '%s'" % (rec['name']))
-    print("  ID: '%s'" % rec['id'])
+    print("  ID: '%s', file: '%s'" % (rec['id'], rec['file']))
     print("  Model: '%s', Icon: '%s'" % (rec['model'], rec['icon']))
     if 'script' in rec:
         print("  Script: '%s'" % (rec['script']))
     print("  %10s%10s%10s" % ("effect", "skill", "attribute"))
     for i in range(0,4):
-        print("  %10d%10d%10d" % (rec['effect_ids'][i], rec['skill_ids'][i], rec['attr_ids'][i]))
+        print("  %10d%10d%10d" % rec['effects'][i])
 
 def ppTES3(rec):
     print("TES3 record, type %d, version %f" % (rec['filetype'], rec['version']))
@@ -279,75 +282,6 @@ def ppTES3(rec):
 
     print()
 
-
-def mergeableLists(alllists):
-    candidates = {}
-    for l in alllists:
-        lid = l['name']
-        if lid in candidates:
-            candidates[lid].append(l)
-        else:
-            candidates[lid] = [l]
-
-    mergeables = {}
-    for k in candidates:
-        if len(candidates[k]) > 1:
-            mergeables[k] = candidates[k]
-
-    return mergeables
-
-
-def mergeLists(lls):
-    # last one gets priority for list-level attributes
-    last = lls[-1]
-    newLev = { 'type': last['type'],
-               'name': last['name'],
-               'calcfrom': last['calcfrom'],
-               'chancenone': last['chancenone'] }
-
-    allItems = []
-    for l in lls:
-        allItems += l['items']
-
-    newLev['files'] = [ x['file'] for x in lls ]
-    newLev['file'] = ', '.join(newLev['files'])
-
-
-    # This ends up being a bit tricky, but it prevents us
-    # from overloading lists with the same stuff.
-    #
-    # This is needed, because the original leveled lists
-    # contain multiple entries for some creatures/items, and
-    # that gets reproduced in many plugins. 
-    #
-    # If we just added and sorted, then the more plugins you
-    # have, the less often you'd see plugin content. This
-    # method prevents the core game content from overwhelming
-    # plugin contents.
-
-    allUniques = [ x for x in set(allItems) ]
-    allUniques.sort()
-
-    newList = []
-
-    for i in allUniques:
-        newCount = max([ x['items'].count(i) for x in lls ])
-        newList += [i] * newCount
-
-    newLev['items'] = newList
-
-    return newLev
-
-
-def mergeAllLists(alllists):
-    mergeables = mergeableLists(alllists)
-
-    merged = []
-
-    for k in mergeables:
-        merged.append(mergeLists(mergeables[k]))
-
-    return merged
 
 
 def readCfg(cfg):
@@ -382,22 +316,6 @@ def readCfg(cfg):
 
     return fp_mods
 
-def dumplists(cfg):
-    llists = []
-    fp_mods = readCfg(cfg)
-
-    for f in fp_mods:
-        [ ppTES3(parseTES3(x)) for x in oldGetRecords(f, 'TES3') ]
-
-    for f in fp_mods:
-        llists += [ parseLEV(x) for x in oldGetRecords(f, 'LEVI') ]
-
-    for f in fp_mods:
-        llists += [ parseLEV(x) for x in oldGetRecords(f, 'LEVC') ]
-
-    for l in llists:
-        ppLEV(l)
-
 
 def dumpalchs(cfg):
     alchs = []
@@ -407,7 +325,78 @@ def dumpalchs(cfg):
         [ ppTES3(parseTES3(x)) for x in oldGetRecords(f, 'TES3') ]
 
     for f in fp_mods:
-        [ ppINGR(parseINGR(x)) for x in oldGetRecords(f, 'INGR') ]
+        ingrs = [ parseINGR(x) for x in oldGetRecords(f, 'INGR') ]
+        [ ppINGR(x) for x in ingrs ]
+
+
+
+def shuffle_ingredients(ingredients):
+    # Okay, here's what we're doing.
+    #
+    # First, let's take out all the ingredients that
+    # don't have any effects. They're likely unused
+    # or singular quest items.
+
+    final_ingredients = []
+
+    for ingr in ingredients:
+        if ingr['effects'][0][0] < 0 \
+           and ingr['effects'][1][0] < 0 \
+           and ingr['effects'][2][0] < 0 \
+           and ingr['effects'][3][0] < 0:
+            final_ingredients.append(ingr)
+
+    for ingr in final_ingredients:
+        ingredients.remove(ingr)
+
+    # Next, we're going to build four lists, one
+    # each for the first, second, third, and fourth
+    # effects.
+    #
+    # Why?
+    #
+    # We want to maintain proportions of different
+    # effects. For example, in Vanilla, Restore
+    # Fatigue is common as a first effect, and only
+    # shows up once as a second effect. Likewise,
+    # in Vanilla, some effects only appear in one
+    # ingredient. We want to keep those
+    # characteristics
+
+    effect_lists = [[],[],[],[]]
+    for i in range(0,4):
+        for ingr in ingredients:
+            if ingr['effects'][i][0] > 0:
+                effect_lists[i].append(ingr['effects'][i])
+
+    # Next, we shuffle the ingredients, then go
+    # through each effect, assigning it to an
+    # ingredient. At the end, move any remaining
+    # ingredients to the final list. Repeat
+    # until we assign all four levels of effect
+
+    for i in range(0,4):
+        shuffle(ingredients)
+        total_effects = len(effect_lists[i])
+        for j in range(0,total_effects):
+            ingredients[j]['effects'][i] = effect_lists[i][j]
+        if len(ingredients) > total_effects:
+            final_ingredients += ingredients[total_effects:]
+            del ingredients[total_effects:]
+
+    # and then slap the rest in
+
+    final_ingredients += ingredients
+
+    print("first effects:  %s" % len(effect_lists[0]))
+    print("second effects: %s" % len(effect_lists[1]))
+    print("third effects:  %s" % len(effect_lists[2]))
+    print("fourth effects: %s" % len(effect_lists[3]))
+
+    print("total ingredients shuffled: %s" % len(final_ingredients))
+
+    return final_ingredients
+
 
 
 def main(cfg, outmoddir, outmod):
@@ -415,13 +404,12 @@ def main(cfg, outmoddir, outmod):
 
     # first, let's grab the "raw" records from the files
 
-    (rtes3, rlevi, rlevc) = ([], [], [])
+    (rtes3, ringr) = ([], [])
     for f in fp_mods:
         print("Parsing '%s' for relevant records" % f)
-        (rtes3t, rlevit, rlevct) = getRecords(f, ('TES3', 'LEVI', 'LEVC'))
+        (rtes3t, ringrt) = getRecords(f, ('TES3', 'INGR'))
         rtes3 += rtes3t
-        rlevi += rlevit
-        rlevc += rlevct
+        ringr += ringrt
 
     # next, parse the tes3 records so we can get a list
     # of master files required by all our mods
@@ -435,32 +423,40 @@ def main(cfg, outmoddir, outmod):
 
     master_list = [ (k,v) for (k,v) in masters.items() ]
 
-    # now, let's parse the levi and levc records into
-    # mergeable lists, then merge them
 
-    # creature lists
-    clist = [ parseLEV(x) for x in rlevc ]
-    levc = mergeAllLists(clist)
+    # now parse the ingredients entries.
 
-    # item lists
-    ilist = [ parseLEV(x) for x in rlevi ]
-    levi = mergeAllLists(ilist)
+    ilist = [ parseINGR(x) for x in ringr ]
 
+    # we need to uniquify the list -- mods may alter
+    # Vanilla ingredients by replacing them
 
-    # now build the binary representation of
-    # the merged lists.
+    idict = {}
+    for ingr in ilist:
+        idict[ingr['id']] = ingr
+
+    print("total ingredient records: %s" % (len(ilist)))
+    print("total ingredients: %s" % (len(idict)))
+
+    new_ilist = [ x for x in idict.values() ]
+
+    # now we build a list with shuffled ingredient effects
+
+    shuffled_ilist = shuffle_ingredients(new_ilist)
+
+    # now turn those ingredients back into INGR records
+    #
     # along the way, build up the module
     # description for the new merged mod, out
-    # of the names of mods that had lists
+    # of the names of mods that had ingredients
 
-    llist_bc = b''
+    ilist_bin = b''
     pluginlist = []
-    for x in levi + levc:
-        # ppLEV(x)
-        llist_bc += packLEV(x)
-        pluginlist += x['files']
+    for x in shuffled_ilist:
+        ilist_bin += packINGR(x)
+        pluginlist += x['file']
     plugins = set(pluginlist)
-    moddesc = "Merged leveled lists from: %s" % ', '.join(plugins)
+    moddesc = "Shuffled ingredients from: %s" % ', '.join(plugins)
 
     # finally, build the binary form of the
     # TES3 record, and write the whole thing
@@ -471,8 +467,8 @@ def main(cfg, outmoddir, outmod):
         p.mkdir(parents=True)
 
     with open(outmod, 'wb') as f:
-        f.write(packTES3(moddesc, len(levi + levc), master_list))
-        f.write(llist_bc)
+        f.write(packTES3(moddesc, len(shuffled_ilist), master_list))
+        f.write(ilist_bin)
 
     # And give some hopefully-useful instructions
 
@@ -481,9 +477,9 @@ def main(cfg, outmoddir, outmod):
     print(" Great! I think that worked. When you next start the OpenMW Launcher, look for a module named %s. Make sure of the following things:" % modShortName)
     print("    1. %s is at the bottom of the list. Drag it to the bottom if it's not. It needs to load last." % modShortName)
     print("    2. %s is checked (enabled)" % modShortName)
-    print("    3. Any other OMWLLF mods are *un*checked. Loading them might not cause problems, but probably will")
+    print("    3. Any other OMW ingredient shuffler mods are *un*checked. Loading them might not cause problems, but probably will")
     print("\n")
-    print(" Then, go ahead and start the game! Your leveled lists should include adjustmemts from all relevants enabled mods")
+    print(" Then, go ahead and start the game! All alchemy ingredients from all your mods should now have shuffled effects.")
     print("\n")
 
 
@@ -500,11 +496,11 @@ if __name__ == '__main__':
 
     parser.add_argument('-m', '--modname', type = str, default = None,
                         action = 'store', required = False,
-                        help = 'Name of the new module to create. By default, this is "OMWLLF Mod - <today\'s date>.omwaddon.')
+                        help = 'Name of the new module to create. By default, this is "Shuffled Ingredients - <today\'s date>.omwaddon.')
 
-    parser.add_argument('--dumpalchs', default = True,
+    parser.add_argument('--dumpalchs', default = False,
                         action = 'store_true', required = False,
-                        help = 'Instead of generating merged lists, dump all leveled lists in the conf mods. Used for debugging')
+                        help = 'Instead of generating merged lists, dump all alchemy ingredients in the conf mods. Used for debugging')
 
     p = parser.parse_args()
 
@@ -577,7 +573,7 @@ if __name__ == '__main__':
     if p.modname:
         modName = p.modname
     else:
-        modName = 'OMWLLF Mod - %s.omwaddon' % date.today().strftime('%Y-%m-%d')
+        modName = 'Shuffled Ingredients - %s.omwaddon' % date.today().strftime('%Y-%m-%d')
 
     modFullPath = os.path.join(baseModDir, modName)
 
