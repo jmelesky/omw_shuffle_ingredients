@@ -96,6 +96,31 @@ def parseINGR(rec):
 
     return ingrrec
 
+def parseLEVC(rec):
+    # we're not writing these back out, and we're only
+    # interested in the ID and the list of items, so
+    # disregard the other info
+
+    levrec = {}
+    sr = rec['subrecords']
+
+    levrec['name'] = parseString(sr[0]['data'])
+
+    if len(sr) > 3:
+        listcount = parseNum(sr[3]['data'])
+        listitems = []
+
+        for i in range(0,listcount*2,2):
+            itemid = parseString(sr[4+i]['data'])
+            listitems.append(itemid)
+
+        levrec['items'] = listitems
+    else:
+        levrec['items'] = []
+
+    return levrec
+
+
 def pullSubs(rec, subtype):
     return [ s for s in rec['subrecords'] if s['type'] == subtype ]
 
@@ -404,11 +429,12 @@ def main(cfg, outmoddir, outmod):
 
     # first, let's grab the "raw" records from the files
 
-    (rtes3, ringr) = ([], [])
+    (rtes3, rlevc, ringr) = ([], [], [])
     for f in fp_mods:
         print("Parsing '%s' for relevant records" % f)
-        (rtes3t, ringrt) = getRecords(f, ('TES3', 'INGR'))
+        (rtes3t, rlevct, ringrt) = getRecords(f, ('TES3', 'LEVC', 'INGR'))
         rtes3 += rtes3t
+        rlevc += rlevct
         ringr += ringrt
 
     # next, parse the tes3 records so we can get a list
@@ -423,6 +449,18 @@ def main(cfg, outmoddir, outmod):
 
     master_list = [ (k,v) for (k,v) in masters.items() ]
 
+    # parse the levc records -- we want to sort things
+    # as food, if the appear in a food leveled list
+
+    levclist = [ parseLEVC(x) for x in rlevc ]
+
+    # get a list of items that appear in lists of "food"
+
+    foodset = set()
+    for ll in levclist:
+        if 'food' in ll['name'] or 'Food' in ll['name']:
+            for ingr in ll['items']:
+                foodset.add(ingr)
 
     # now parse the ingredients entries.
 
@@ -435,14 +473,28 @@ def main(cfg, outmoddir, outmod):
     for ingr in ilist:
         idict[ingr['id']] = ingr
 
-    print("total ingredient records: %s" % (len(ilist)))
-    print("total ingredients: %s" % (len(idict)))
-
     new_ilist = [ x for x in idict.values() ]
 
-    # now we build a list with shuffled ingredient effects
+    # now sort the ingredients into food and non-food
 
-    shuffled_ilist = shuffle_ingredients(new_ilist)
+    food_ilist = []
+    nonfood_ilist = []
+
+    for ingr in new_ilist:
+        if ingr['id'] in foodset or 'food' in ingr['id'] \
+           or 'Food' in ingr['id']:
+            food_ilist.append(ingr)
+        else:
+            nonfood_ilist.append(ingr)
+
+    print("total ingredient records: %s" % (len(ilist)))
+    print("total ingredients: %s" % (len(new_ilist)))
+    print("total food: %s, total nonfood: %s" % (len(food_ilist), len(nonfood_ilist)))
+
+    # now we build new lists with shuffled ingredient effects
+
+    shuffled_foods = shuffle_ingredients(food_ilist)
+    shuffled_nonfoods = shuffle_ingredients(nonfood_ilist)
 
     # now turn those ingredients back into INGR records
     #
@@ -451,11 +503,14 @@ def main(cfg, outmoddir, outmod):
     # of the names of mods that had ingredients
 
     ilist_bin = b''
-    pluginlist = []
-    for x in shuffled_ilist:
+    plugins = set()
+    for x in shuffled_foods:
         ilist_bin += packINGR(x)
-        pluginlist += x['file']
-    plugins = set(pluginlist)
+        plugins.add(x['file'])
+    for x in shuffled_nonfoods:
+        ilist_bin += packINGR(x)
+        plugins.add(x['file'])
+
     moddesc = "Shuffled ingredients from: %s" % ', '.join(plugins)
 
     # finally, build the binary form of the
@@ -467,7 +522,8 @@ def main(cfg, outmoddir, outmod):
         p.mkdir(parents=True)
 
     with open(outmod, 'wb') as f:
-        f.write(packTES3(moddesc, len(shuffled_ilist), master_list))
+        f.write(packTES3(moddesc, len(shuffled_foods) +
+                         len(shuffled_nonfoods), master_list))
         f.write(ilist_bin)
 
     # And give some hopefully-useful instructions
