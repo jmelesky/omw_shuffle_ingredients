@@ -4,7 +4,6 @@ from struct import pack, unpack
 from datetime import date
 from pathlib import Path
 from random import shuffle
-from pprint import pprint
 import os.path
 import argparse
 import sys
@@ -94,7 +93,22 @@ def parseINGR(rec):
                 skill = parseNum(attr_struct[(24+i*4):(28+i*4)])
                 attribute = parseNum(attr_struct[(40+i*4):(44+i*4)])
 
-                effect_tuples.append((effect, skill, attribute))
+                # even when effects don't use them, they store
+                # a skill and attribute. in order to be better
+                # about duplicate items, we want to normalize
+                # that dead data
+                #
+                # effect id referenced from openmw itself:
+                # openmw/apps/openmw/mwgui/widgets.hpp
+
+                if effect in [17, 22, 74, 79, 85]:
+                    # uses an attribute
+                    effect_tuples.append((effect, -1, attribute))
+                elif effect in [21, 26, 78, 83, 89]:
+                    # uses a skill (not common, but happens
+                    effect_tuples.append((effect, skill, -1))
+                else:
+                    effect_tuples.append((effect, -1, -1))
 
             ingrrec['effects_hash'] = tuple(effect_tuples)
             ingrrec['effects'] = effect_tuples
@@ -421,21 +435,12 @@ def shuffle_ingredients(ingredients):
             for ingr in ingr_array[total_effects:]:
                 final_ingredients[ingr['id']] = ingr
             del ingr_array[total_effects:]
-        print("ingredients array length: %s" % len(ingr_array))
-        print("final length: %s" % len(final_ingredients))
 
 
     # and then slap the rest in
 
     for ingr in ingr_array:
         final_ingredients[ingr['id']] = ingr
-
-    print("first effects:  %s" % len(effect_lists[0]))
-    print("second effects: %s" % len(effect_lists[1]))
-    print("third effects:  %s" % len(effect_lists[2]))
-    print("fourth effects: %s" % len(effect_lists[3]))
-
-    print("total ingredients shuffled: %s" % len(final_ingredients))
 
     return final_ingredients
 
@@ -538,11 +543,6 @@ def main(cfg, outmoddir, outmod):
         else:
             nonfoods_by_id[ingr['id']] = ingr
 
-    print("total ingredient records: %s" % (len(ilist)))
-    print("ingredients: %s" % (len(ingrs_by_id)))
-    print("semi-identical ingredient sets: %s" % (len(dupe_ingrs)))
-    print("total food: %s, total nonfood: %s" % (len(foods_by_id), len(nonfoods_by_id)))
-
     # now we build a new dict with shuffled ingredient effects
 
     shuffled_ingredients = shuffle_ingredients(foods_by_id)
@@ -554,8 +554,6 @@ def main(cfg, outmoddir, outmod):
         for dupe in dupelist:
             dupe['effects'] = shuffled_ingredients[anchor_id]['effects']
             shuffled_ingredients[dupe['id']] = dupe
-
-    print("total shuffled ingredients: %s" % len(shuffled_ingredients))
 
     # now turn those ingredients back into INGR records
     #
