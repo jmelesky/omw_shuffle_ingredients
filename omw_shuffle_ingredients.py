@@ -370,17 +370,23 @@ def shuffle_ingredients(ingredients):
     # don't have any effects. They're likely unused
     # or singular quest items.
 
-    final_ingredients = []
+    print("ingredients length: %s" % len(ingredients))
 
-    for ingr in ingredients:
+    final_ingredients = {}
+
+    for ingr in ingredients.values():
         if ingr['effects'][0][0] < 0 \
            and ingr['effects'][1][0] < 0 \
            and ingr['effects'][2][0] < 0 \
            and ingr['effects'][3][0] < 0:
-            final_ingredients.append(ingr)
+            final_ingredients[ingr['id']] = ingr
 
-    for ingr in final_ingredients:
-        ingredients.remove(ingr)
+    print("final length: %s" % len(final_ingredients))
+
+    for ingr in final_ingredients.values():
+        del ingredients[ingr['id']]
+
+    print("ingredients length: %s" % len(ingredients))
 
     # Next, we're going to build four lists, one
     # each for the first, second, third, and fourth
@@ -398,7 +404,7 @@ def shuffle_ingredients(ingredients):
 
     effect_lists = [[],[],[],[]]
     for i in range(0,4):
-        for ingr in ingredients:
+        for ingr in ingredients.values():
             if ingr['effects'][i][0] > 0:
                 effect_lists[i].append(ingr['effects'][i])
 
@@ -408,18 +414,30 @@ def shuffle_ingredients(ingredients):
     # ingredients to the final list. Repeat
     # until we assign all four levels of effect
 
+    ingr_array = [ x for x in ingredients.values() ]
+
+    print("ingredients array length: %s" % len(ingr_array))
+
     for i in range(0,4):
-        shuffle(ingredients)
+        shuffle(ingr_array)
         total_effects = len(effect_lists[i])
         for j in range(0,total_effects):
-            ingredients[j]['effects'][i] = effect_lists[i][j]
-        if len(ingredients) > total_effects:
-            final_ingredients += ingredients[total_effects:]
-            del ingredients[total_effects:]
+            ingr_array[j]['effects'][i] = effect_lists[i][j]
+        if len(ingr_array) > total_effects:
+            for ingr in ingr_array[total_effects:]:
+                final_ingredients[ingr['id']] = ingr
+            del ingr_array[total_effects:]
+        print("ingredients array length: %s" % len(ingr_array))
+        print("final length: %s" % len(final_ingredients))
+
 
     # and then slap the rest in
 
-    final_ingredients += ingredients
+    for ingr in ingr_array:
+        final_ingredients[ingr['id']] = ingr
+
+    print("final length: %s" % len(final_ingredients))
+
 
     print("first effects:  %s" % len(effect_lists[0]))
     print("second effects: %s" % len(effect_lists[1]))
@@ -477,32 +495,48 @@ def main(cfg, outmoddir, outmod):
     # we need to uniquify the list -- mods may alter
     # Vanilla ingredients by replacing them
 
-    idict = {}
+    ingrs_by_id = {}
     for ingr in ilist:
-        idict[ingr['id']] = ingr
+        ingrs_by_id[ingr['id']] = ingr
 
-    new_ilist = [ x for x in idict.values() ]
+    # look for ingredients that
+    #   1- use the same models as each other
+    #   2- have identical effects
+    #
+    # stash all but one of those ingredients so we
+    # can maintain that consistency
+
+    ingrs_by_model = {}
+    for ingr in ingrs_by_id.values():
+        if ingr['model'] in ingrs_by_model:
+            ingrs_by_model['model'].append(ingr)
+        else:
+            ingrs_by_model['model'] = [ ingr ]
+
+    dupe_ingrs = {}
+
 
     # now sort the ingredients into food and non-food
 
-    food_ilist = []
-    nonfood_ilist = []
+    foods_by_id = {}
+    nonfoods_by_id = {}
 
-    for ingr in new_ilist:
+    for ingr in ingrs_by_id.values():
         if ingr['id'] in foodset or 'food' in ingr['id'] \
            or 'Food' in ingr['id']:
-            food_ilist.append(ingr)
+            foods_by_id[ingr['id']] = ingr
         else:
-            nonfood_ilist.append(ingr)
+            nonfoods_by_id[ingr['id']] = ingr
 
     print("total ingredient records: %s" % (len(ilist)))
-    print("total ingredients: %s" % (len(new_ilist)))
-    print("total food: %s, total nonfood: %s" % (len(food_ilist), len(nonfood_ilist)))
+    print("ingredients: %s" % (len(ingrs_by_id)))
+    print("semi-identical ingredients: %s" % (len(dupe_ingrs)))
+    print("total food: %s, total nonfood: %s" % (len(foods_by_id), len(nonfoods_by_id)))
 
     # now we build new lists with shuffled ingredient effects
 
-    shuffled_foods = shuffle_ingredients(food_ilist)
-    shuffled_nonfoods = shuffle_ingredients(nonfood_ilist)
+    shuffled_foods = shuffle_ingredients(foods_by_id)
+    shuffled_nonfoods = shuffle_ingredients(nonfoods_by_id)
 
     # now turn those ingredients back into INGR records
     #
@@ -512,10 +546,10 @@ def main(cfg, outmoddir, outmod):
 
     ilist_bin = b''
     plugins = set()
-    for x in shuffled_foods:
+    for x in shuffled_foods.values():
         ilist_bin += packINGR(x)
         plugins.add(x['file'])
-    for x in shuffled_nonfoods:
+    for x in shuffled_nonfoods.values():
         ilist_bin += packINGR(x)
         plugins.add(x['file'])
 
