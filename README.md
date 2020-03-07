@@ -37,7 +37,7 @@ The shuffler should happily work without any arguments, but if you have anything
 
   - `-c` (or `--configfile`), which allows you to specify a specific config file to use
   - `-d` (or `--moddir`), where you can set the directory in which to put the new mod
-  - `-m` (or `--modname`), which lets you set the name of the new mod (it defaults to `Shuffled Ingredients - <today's date>.omwaddon`, but to each their own)
+  - `-m` (or `--modname`), which lets you set the name of the new mod (it defaults to `Shuffled Ingredients - <today's date>.omwaddon`)
 
 ## HELP!
 
