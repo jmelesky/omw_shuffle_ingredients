@@ -10,7 +10,7 @@ This utility is written specifically for [OpenMW](http://openmw.org/) users, and
 
 ## Features
 
-  - Retains effect commonality. If there's only one ingredient with "Drain Mercantile", there will still be just one after the shuffle. Likewise, "Restore Fatigue" will remain a common first effect.
+  - Retains effect frequency. If there's only one ingredient with "Drain Mercantile", there will still be just one after the shuffle. Likewise, "Restore Fatigue" will remain a common first effect.
   - Supports any alchemy mods you're using. It parses all mods you're set up to use, and shuffles accordingly. That is, if you're using Vanilla + a mod that removes all "Fortify Intelligence" effects, you won't see any of those effects post-shuffle, either.
   - Separates food and non-food. Food is more likely to have beneficial first effects, and that was important to retain.
   - Hides cursed items appropriately. An emerald and a cursed emerald should always have the same effects, and the shuffler honors that.
