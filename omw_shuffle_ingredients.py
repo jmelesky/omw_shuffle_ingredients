@@ -68,29 +68,34 @@ def parseTES3(rec):
 
 def parseINGR(rec):
     ingrrec = {}
-    sr = rec['subrecords']
-    ingrrec['id'] = parseString(sr[0]['data'])
-    ingrrec['model'] = parseString(sr[1]['data'])
-    ingrrec['name'] = parseString(sr[2]['data'])
+    srs = rec['subrecords']
 
-    attr_struct = sr[3]['data']
-    ingrrec['weight'] = parseFloat(attr_struct[0:4])
-    ingrrec['value'] = parseNum(attr_struct[4:8])
+    for sr in srs:
+        if sr['type'] == 'NAME':
+            ingrrec['id'] = parseString(sr['data'])
+        elif sr['type'] == 'MODL':
+            ingrrec['model'] = parseString(sr['data'])
+        elif sr['type'] == 'FNAM':
+            ingrrec['name'] = parseString(sr['data'])
+        elif sr['type'] == 'ITEX':
+            ingrrec['icon'] = parseString(sr['data'])
+        elif sr['type'] == 'SCRI':
+            ingrrec['script'] = parseString(sr['data'])
+        elif sr['type'] == 'IRDT':
+            attr_struct = sr['data']
+            ingrrec['weight'] = parseFloat(attr_struct[0:4])
+            ingrrec['value'] = parseNum(attr_struct[4:8])
 
-    effect_tuples = []
+            effect_tuples = []
 
-    for i in range(0,4):
-        effect = parseNum(attr_struct[(8+i*4):(12+i*4)])
-        skill = parseNum(attr_struct[(24+i*4):(28+i*4)])
-        attribute = parseNum(attr_struct[(40+i*4):(44+i*4)])
+            for i in range(0,4):
+                effect = parseNum(attr_struct[(8+i*4):(12+i*4)])
+                skill = parseNum(attr_struct[(24+i*4):(28+i*4)])
+                attribute = parseNum(attr_struct[(40+i*4):(44+i*4)])
 
-        effect_tuples.append((effect, skill, attribute))
+                effect_tuples.append((effect, skill, attribute))
 
-    ingrrec['effects'] = effect_tuples
-
-    ingrrec['icon'] = parseString(sr[4]['data'])
-    if len(sr) > 5:
-        ingrrec['script'] = parseString(sr[5]['data'])
+            ingrrec['effects'] = effect_tuples
 
     ingrrec['file'] = os.path.basename(rec['fullpath'])
 
