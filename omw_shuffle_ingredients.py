@@ -96,6 +96,9 @@ def parseINGR(rec):
                 effect_tuples.append((effect, skill, attribute))
 
             ingrrec['effects'] = effect_tuples
+        else:
+            print("unknown subrecord type '%s'" % sr['type'])
+            ppRecord(rec)
 
     ingrrec['file'] = os.path.basename(rec['fullpath'])
 
